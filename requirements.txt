@@ -1,4 +1,0 @@
-python-telegram-bot==21.6
-requests>=2.31.0
-pyotp>=2.9.0
-pycryptodome>=3.19.0
