@@ -298,6 +298,7 @@ def handle_document(message):
         # Gửi file kết quả trả về cho người dùng
         output_io = io.BytesIO('\n'.join(success_tokens).encode('utf-8'))
         output_io.name = f"tokens_result_{int(time.time())}.txt"
+        output_io.seek(0)
         bot.send_document(message.chat.id, output_io, caption=f"🎉 Hoàn tất! Lấy thành công {len(success_tokens)} token.")
         
     except Exception as e:
