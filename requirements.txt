@@ -1,5 +1,0 @@
-requests
-pyotp
-pyTelegramBotAPI
-pycryptodome
-flask
