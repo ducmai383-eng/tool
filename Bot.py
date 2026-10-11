@@ -12,9 +12,11 @@ import io
 import struct
 import asyncio
 import tempfile
+from threading import Thread
 from Crypto.Cipher import AES, PKCS1_v1_5
 from Crypto.PublicKey import RSA
 from Crypto.Random import get_random_bytes
+from flask import Flask
 
 try:
     from telegram import Update, InputFile
@@ -32,7 +34,7 @@ except ImportError:
 
 
 # ==========================================
-# PHAN LOGIC (GIU NGUYEN 100%)
+# PHAN LOGIC 
 # ==========================================
 
 class FacebookPasswordEncryptor:
@@ -380,7 +382,6 @@ def authorized(update: Update) -> bool:
 
 
 def parse_account_args(args_text: str):
-    """Parse 'uid|pass' or 'uid|pass|2fa' or 'uid|pass|2fa|machine_id'."""
     parts = args_text.strip().split("|")
     if len(parts) < 2:
         return None
@@ -394,7 +395,6 @@ def parse_account_args(args_text: str):
 
 
 def do_login(uid, pwd, tfa, machine_id, convert_all, convert_list):
-    """Run login synchronously (called via asyncio.to_thread)."""
     fb = FacebookLogin(
         uid_phone_mail=uid,
         password=pwd,
@@ -407,7 +407,6 @@ def do_login(uid, pwd, tfa, machine_id, convert_all, convert_list):
 
 
 def format_result_text(result):
-    """Format the result into a human-readable HTML message."""
     lines = []
     if result.get('success'):
         lines.append("✅ <b>LOGIN THANH CONG</b>")
@@ -462,23 +461,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "📖 <b>HUONG DAN</b>\n\n"
         "<b>1) Dang nhap don:</b>\n"
-        "/login <code>uid|pass</code>\n"
-        "Vi du: /login <code>100000123|matkhau123</code>\n\n"
-        "<b>2) Co 2FA (TOTP secret 32 ky tu):</b>\n"
+        "/login <code>uid|pass</code>\n\n"
+        "<b>2) Co 2FA:</b>\n"
         "/login <code>uid|pass|JBSWY3DPEHPK3PXP</code>\n\n"
-        "<b>3) Co 2FA + Machine ID:</b>\n"
-        "/login <code>uid|pass|2fa|machine_id</code>\n\n"
-        "<b>4) Convert sang tat ca app:</b>\n"
-        "/convert_all <code>uid|pass</code>\n\n"
-        "<b>5) Convert sang 1 app cu the:</b>\n"
-        "/convert <code>FB_LITE uid|pass</code>\n\n"
-        "<b>6) Xem app ho tro:</b>\n"
-        "/apps\n\n"
-        "<b>7) Check hang loat (batch):</b>\n"
+        "<b>3) Check hang loat:</b>\n"
         "• Gui file <code>.txt</code> cho bot\n"
-        "• Moi dong dang <code>uid|pass</code> (hoac <code>uid|pass|2fa</code>)\n"
-        "• Bot tra ve file <code>tokens.txt</code> moi dong 1 token\n\n"
-        "⚠️ <i>Neu muon batch kem 2FA, dung format: uid|pass|2fa</i>"
     )
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
 
@@ -488,8 +475,7 @@ async def cmd_apps(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     lines = ["📱 <b>DANH SACH APP</b>\n"]
     for key, info in FacebookAppTokens.APPS.items():
-        lines.append(f"• <code>{key}</code> — {info['name']} (app_id: {info['app_id']})")
-    lines.append("\nDung key trong lenh /convert <code>APP_KEY uid|pass</code>")
+        lines.append(f"• <code>{key}</code> — {info['name']}")
     await update.message.reply_text("\n".join(lines), parse_mode=ParseMode.HTML)
 
 
@@ -499,13 +485,7 @@ async def cmd_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args_text = " ".join(context.args).strip() if context.args else ""
     parsed = parse_account_args(args_text)
     if not parsed:
-        await update.message.reply_text(
-            "❌ Sai cu phap.\n"
-            "Dung: /login <code>uid|pass</code>\n"
-            "Hoac: /login <code>uid|pass|2fa</code>\n"
-            "Hoac: /login <code>uid|pass|2fa|machine_id</code>",
-            parse_mode=ParseMode.HTML
-        )
+        await update.message.reply_text("❌ Sai cu phap. Dung: /login <code>uid|pass</code>", parse_mode=ParseMode.HTML)
         return
     uid, pwd, tfa, machine_id = parsed
 
@@ -513,7 +493,6 @@ async def cmd_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         result = await asyncio.to_thread(do_login, uid, pwd, tfa, machine_id, False, None)
         text = format_result_text(result)
-        # Telegram message limit ~4096 chars
         if len(text) > 4000:
             await wait_msg.delete()
             await update.message.reply_text(text[:4000], parse_mode=ParseMode.HTML)
@@ -530,14 +509,11 @@ async def cmd_convert_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args_text = " ".join(context.args).strip() if context.args else ""
     parsed = parse_account_args(args_text)
     if not parsed:
-        await update.message.reply_text(
-            "❌ Sai cu phap.\nDung: /convert_all <code>uid|pass</code>",
-            parse_mode=ParseMode.HTML
-        )
+        await update.message.reply_text("❌ Sai cu phap. Dung: /convert_all <code>uid|pass</code>", parse_mode=ParseMode.HTML)
         return
     uid, pwd, tfa, machine_id = parsed
 
-    wait_msg = await update.message.reply_text("⏳ Dang dang nhap &amp; convert tat ca app...")
+    wait_msg = await update.message.reply_text("⏳ Dang dang nhap &amp; convert...")
     try:
         result = await asyncio.to_thread(do_login, uid, pwd, tfa, machine_id, True, None)
         text = format_result_text(result)
@@ -555,38 +531,27 @@ async def cmd_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not authorized(update):
         return
     if not context.args or len(context.args) < 2:
-        await update.message.reply_text(
-            "❌ Sai cu phap.\nDung: /convert <code>APP_KEY uid|pass</code>\n"
-            "Vi du: /convert <code>FB_LITE 100000123|matkhau</code>",
-            parse_mode=ParseMode.HTML
-        )
+        await update.message.reply_text("❌ Sai cu phap. Dung: /convert <code>APP_KEY uid|pass</code>", parse_mode=ParseMode.HTML)
         return
     app_key = context.args[0].upper().strip()
     if app_key not in FacebookAppTokens.APPS:
-        await update.message.reply_text(
-            f"❌ App key '<code>{app_key}</code>' khong hop le. Dung /apps de xem danh sach.",
-            parse_mode=ParseMode.HTML
-        )
+        await update.message.reply_text(f"❌ App key khong hop le.", parse_mode=ParseMode.HTML)
         return
 
     args_text = " ".join(context.args[1:]).strip()
     parsed = parse_account_args(args_text)
     if not parsed:
-        await update.message.reply_text(
-            "❌ Sai cu phap account.\nDung: /convert <code>APP_KEY uid|pass</code>",
-            parse_mode=ParseMode.HTML
-        )
+        await update.message.reply_text("❌ Sai cu phap account.", parse_mode=ParseMode.HTML)
         return
     uid, pwd, tfa, machine_id = parsed
 
-    wait_msg = await update.message.reply_text(f"⏳ Dang dang nhap &amp; convert sang {app_key}...")
+    wait_msg = await update.message.reply_text(f"⏳ Dang convert sang {app_key}...")
     try:
         result = await asyncio.to_thread(do_login, uid, pwd, tfa, machine_id, False, [app_key])
         text = format_result_text(result)
         if len(text) > 4000:
             await wait_msg.delete()
             await update.message.reply_text(text[:4000], parse_mode=ParseMode.HTML)
-            await update.message.reply_text(text[4000:], parse_mode=ParseMode.HTML)
         else:
             await wait_msg.edit_text(text, parse_mode=ParseMode.HTML)
     except Exception as e:
@@ -594,13 +559,10 @@ async def cmd_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle uploaded .txt files - batch processing."""
     if not authorized(update):
         return
     doc = update.message.document
-    if not doc:
-        return
-    if not (doc.file_name or "").lower().endswith('.txt'):
+    if not doc or not (doc.file_name or "").lower().endswith('.txt'):
         await update.message.reply_text("⚠️ Chi xu ly file .txt")
         return
 
@@ -610,7 +572,7 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         in_path = os.path.join(tmpdir, doc.file_name or "accounts.txt")
         await tg_file.download_to_drive(in_path)
 
-        wait_msg = await update.message.reply_text("⏳ Da nhan file. Dang doc...")
+        wait_msg = await update.message.reply_text("⏳ Da nhan file. Dang xu ly...")
 
         accounts = []
         try:
@@ -634,7 +596,7 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         total = len(accounts)
         if total == 0:
-            await wait_msg.edit_text("❌ File khong chua tai khoan hop le (thieu dau |).")
+            await wait_msg.edit_text("❌ File khong chua tai khoan hop le.")
             return
 
         await wait_msg.edit_text(f"📊 Da nap {total} tai khoan. Bat dau check...")
@@ -642,7 +604,6 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tokens = []
         live_count = 0
         die_count = 0
-        last_progress = -1
 
         for i, acc in enumerate(accounts):
             try:
@@ -662,59 +623,46 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     die_count += 1
             except Exception:
                 die_count += 1
-
-            # Progress update every 5 or at end
-            if (i + 1) % 5 == 0 or (i + 1) == total:
-                progress_pct = int(((i + 1) / total) * 100)
-                if progress_pct != last_progress:
-                    last_progress = progress_pct
-                    try:
-                        await wait_msg.edit_text(
-                            f"📊 Tien do: {i+1}/{total} ({progress_pct}%)\n"
-                            f"✅ Live: {live_count} | ❌ Die: {die_count}"
-                        )
-                    except Exception:
-                        pass
-                # Yield to event loop
-                await asyncio.sleep(0)
+            await asyncio.sleep(0)
 
         if tokens:
-            out_name = f"tokens_original_{int(time.time())}.txt"
+            out_name = f"tokens_{int(time.time())}.txt"
             out_path = os.path.join(tmpdir, out_name)
             with open(out_path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(tokens))
 
-            summary = (
-                f"✅ <b>HOAN TAT</b>\n"
-                f"Tong: {total}\n"
-                f"Live: {live_count}\n"
-                f"Die: {die_count}\n\n"
-                f"File token ({len(tokens)} dong) dinh kem ben duoi."
+            await wait_msg.edit_text(
+                f"✅ <b>HOAN TAT</b>\nTong: {total} | Live: {live_count} | Die: {die_count}",
+                parse_mode=ParseMode.HTML
             )
-            await wait_msg.edit_text(summary, parse_mode=ParseMode.HTML)
 
             with open(out_path, 'rb') as f:
                 await update.message.reply_document(
                     document=InputFile(f, filename=out_name),
-                    caption=f"Tokens ({live_count} live / {total} total)"
+                    caption=f"Ket qua: {live_count} tokens"
                 )
         else:
-            await wait_msg.edit_text(
-                f"❌ Khong co token nao lay duoc.\nTong: {total} | Die: {die_count}"
-            )
+            await wait_msg.edit_text(f"❌ Khong lay duoc token nao. Tong: {total} | Die: {die_count}")
+
+
+# ==========================================
+# FLASK WEB SERVER (BẮT BUỘC CHO HUGGING FACE PORT 7860)
+# ==========================================
+app_web = Flask(__name__)
+
+@app_web.route('/')
+def home():
+    return "Bot is running and alive!"
+
+def run_flask():
+    app_web.run(host="0.0.0.0", port=7860)
 
 
 def main():
-    if BOT_TOKEN == "PUT_YOUR_BOT_TOKEN_HERE":
-        print("=" * 60)
-        print("❌ Chua cau hinh BOT_TOKEN!")
-        print("Cach 1: Sua bien BOT_TOKEN trong file nay.")
-        print("Cach 2: Chay voi env var:")
-        print("  Linux/Mac:  BOT_TOKEN=xxx python laytoken_bot.py")
-        print("  Windows:    set BOT_TOKEN=xxx && python laytoken_bot.py")
-        print("=" * 60)
-        sys.exit(1)
+    # Chạy Web Server ở một luồng phụ để đáp ứng yêu cầu port 7860 của Hugging Face
+    Thread(target=run_flask, daemon=True).start()
 
+    # Khởi chạy Telegram Bot
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
@@ -725,7 +673,7 @@ def main():
     app.add_handler(CommandHandler("convert", cmd_convert))
     app.add_handler(MessageHandler(filters.Document.TXT, on_document))
 
-    print("🤖 Bot dang chay... Nhan Ctrl+C de dung.")
+    print("🤖 Bot dang chay tren Hugging Face...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
