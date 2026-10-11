@@ -34,7 +34,7 @@ except ImportError:
 
 
 # ==========================================
-# PHAN LOGIC 
+# PHAN LOGIC (GIU NGUYEN 100%)
 # ==========================================
 
 class FacebookPasswordEncryptor:
@@ -535,7 +535,7 @@ async def cmd_convert(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     app_key = context.args[0].upper().strip()
     if app_key not in FacebookAppTokens.APPS:
-        await update.message.reply_text(f"❌ App key khong hop le.", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("❌ App key khong hop le.", parse_mode=ParseMode.HTML)
         return
 
     args_text = " ".join(context.args[1:]).strip()
@@ -631,22 +631,25 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with open(out_path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(tokens))
 
+            output_io = io.BytesIO(open(out_path, 'rb').read())
+            output_io.name = out_name
+            output_io.seek(0)
+
             await wait_msg.edit_text(
                 f"✅ <b>HOAN TAT</b>\nTong: {total} | Live: {live_count} | Die: {die_count}",
                 parse_mode=ParseMode.HTML
             )
 
-            with open(out_path, 'rb') as f:
-                await update.message.reply_document(
-                    document=InputFile(f, filename=out_name),
-                    caption=f"Ket qua: {live_count} tokens"
-                )
+            await update.message.reply_document(
+                document=output_io,
+                caption=f"Ket qua: {live_count} tokens"
+            )
         else:
             await wait_msg.edit_text(f"❌ Khong lay duoc token nao. Tong: {total} | Die: {die_count}")
 
 
 # ==========================================
-# FLASK WEB SERVER (BẮT BUỘC CHO HUGGING FACE PORT 7860)
+# KHỞI CHẠY (FLASK WEB SERVER + TELEGRAM BOT)
 # ==========================================
 app_web = Flask(__name__)
 
@@ -654,15 +657,11 @@ app_web = Flask(__name__)
 def home():
     return "Bot is running and alive!"
 
-def run_flask():
-    app_web.run(host="0.0.0.0", port=7860)
+def run_telegram_bot():
+    # Tạo vòng lặp sự kiện riêng cho Telegram Bot ở luồng phụ
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
-
-def main():
-    # Chạy Web Server ở một luồng phụ để đáp ứng yêu cầu port 7860 của Hugging Face
-    Thread(target=run_flask, daemon=True).start()
-
-    # Khởi chạy Telegram Bot
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
@@ -673,9 +672,17 @@ def main():
     app.add_handler(CommandHandler("convert", cmd_convert))
     app.add_handler(MessageHandler(filters.Document.TXT, on_document))
 
-    print("🤖 Bot dang chay tren Hugging Face...")
+    print("🤖 Bot Telegram đang chạy...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-
 if __name__ == "__main__":
-    main()
+    if BOT_TOKEN == "PUT_YOUR_BOT_TOKEN_HERE":
+        print("❌ Chưa cấu hình BOT_TOKEN!")
+        sys.exit(1)
+
+    # 1. Chạy Telegram Bot ngầm ở luồng phụ
+    Thread(target=run_telegram_bot, daemon=True).start()
+
+    # 2. Chạy Flask ở luồng chính, tự động nhận port từ Render (mặc định 10000)
+    port = int(os.environ.get("PORT", 10000))
+    app_web.run(host="0.0.0.0", port=port)
