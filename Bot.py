@@ -649,7 +649,7 @@ async def on_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ==========================================
-# KHỞI CHẠY (FLASK LUỒNG PHỤ - TELEGRAM MAIN THREAD)
+# KHỞI CHẠY (FLASK THREAD + MAINTHREAD EVENT LOOP)
 # ==========================================
 app_web = Flask(__name__)
 
@@ -662,14 +662,18 @@ if __name__ == "__main__":
         print("❌ Chưa cấu hình BOT_TOKEN!")
         sys.exit(1)
 
-    # 1. Chạy Flask ở luồng phụ (Background Thread) để mở cổng cho Render (10000)
+    # 1. Chạy Flask ở luồng phụ để mở cổng Render (10000)
     port = int(os.environ.get("PORT", 10000))
     Thread(
         target=lambda: app_web.run(host="0.0.0.0", port=port, debug=False, use_reloader=False),
         daemon=True
     ).start()
 
-    # 2. Khởi chạy Telegram Bot ở Luồng chính (Main Thread)
+    # 2. Tạo và cấu hình tường minh Event Loop cho MainThread (Fix lỗi Python 3.14)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    # 3. Khởi chạy Telegram Bot trên MainThread
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
@@ -680,5 +684,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("convert", cmd_convert))
     app.add_handler(MessageHandler(filters.Document.TXT, on_document))
 
-    print("🤖 Bot Telegram đang chạy trên Main Thread...")
+    print("🤖 Bot Telegram đang chạy hoàn chỉnh trên MainThread...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
